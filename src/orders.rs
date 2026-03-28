@@ -505,6 +505,7 @@ mod tests {
                     token_id: "123".to_string(),
                     side: Side::SELL,
                     amount: Decimal::from_str("5").unwrap(),
+                    price: Decimal::ZERO,
                 },
                 Decimal::from_str("0.40").unwrap(),
                 &ExtraOrderArgs::default(),

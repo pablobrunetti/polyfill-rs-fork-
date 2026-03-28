@@ -574,6 +574,9 @@ pub struct MarketOrderArgs {
     pub side: Side,
     /// Quote amount for buys, base token amount for sells.
     pub amount: Decimal,
+    /// Optional limit price. When > 0, skips the order book HTTP fetch (sign ~0ms).
+    /// Set aggressively (e.g. 0.99 for BUY) to guarantee fill on FAK/FOK orders.
+    pub price: Decimal,
 }
 
 /// Signed order request ready for submission

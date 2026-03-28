@@ -6,8 +6,10 @@
 use crate::auth::{create_l1_headers, create_l2_headers};
 use crate::errors::{PolyfillError, Result};
 use crate::http_config::{
-    create_colocated_client, create_internet_client, create_optimized_client, prewarm_connections,
+    create_colocated_client, create_internet_client, create_optimized_client,
+    create_optimized_client_with_resolve, prewarm_connections,
 };
+use std::net::SocketAddr;
 use crate::types::{OrderOptions, PostOrder, SignedOrderRequest};
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
@@ -279,6 +281,55 @@ impl ClobClient {
             api_creds: Some(api_creds),
             order_builder: Some(order_builder),
             dns_cache,
+            connection_manager,
+            buffer_pool,
+        }
+    }
+
+    /// Same as `with_l2_headers` but pins the HTTP client to a specific IP for
+    /// the given hostname. Pass `Some(("clob.polymarket.com", ip:443))` to force
+    /// a specific physical path, bypassing DNS on every request.
+    pub fn with_l2_headers_resolved(
+        host: &'static str,
+        private_key: &str,
+        chain_id: u64,
+        api_creds: ApiCreds,
+        sig_type: Option<crate::orders::SigType>,
+        funder: Option<Address>,
+        resolve: Option<SocketAddr>,
+    ) -> Self {
+        let signer = private_key
+            .parse::<PrivateKeySigner>()
+            .expect("Invalid private key");
+
+        let order_builder = crate::orders::OrderBuilder::new(signer.clone(), sig_type, funder);
+
+        let resolve_pair = resolve.map(|addr| (host, addr));
+        let http_client = create_optimized_client_with_resolve(resolve_pair)
+            .unwrap_or_else(|_| {
+                reqwest::ClientBuilder::new()
+                    .no_proxy()
+                    .build()
+                    .expect("Failed to build reqwest client")
+            });
+
+        let base_url = format!("https://{}", host);
+        let connection_manager = Some(std::sync::Arc::new(
+            crate::connection_manager::ConnectionManager::new(
+                http_client.clone(),
+                base_url.clone(),
+            ),
+        ));
+        let buffer_pool = std::sync::Arc::new(crate::buffer_pool::BufferPool::new(512 * 1024, 10));
+
+        Self {
+            http_client,
+            base_url,
+            chain_id,
+            signer: Some(signer),
+            api_creds: Some(api_creds),
+            order_builder: Some(order_builder),
+            dns_cache: None,
             connection_manager,
             buffer_pool,
         }
@@ -824,20 +875,9 @@ impl ClobClient {
         token_id: &str,
         tick_size: Option<Decimal>,
     ) -> Result<Decimal> {
-        let min_tick_size = self.get_tick_size(token_id).await?;
-
         match tick_size {
-            None => Ok(min_tick_size),
-            Some(t) => {
-                if t < min_tick_size {
-                    Err(PolyfillError::validation(format!(
-                        "Tick size {} is smaller than min_tick_size {} for token_id: {}",
-                        t, min_tick_size, token_id
-                    )))
-                } else {
-                    Ok(t)
-                }
-            },
+            Some(t) => Ok(t),
+            None => self.get_tick_size(token_id).await,
         }
     }
 
@@ -963,9 +1003,12 @@ impl ClobClient {
             .await?;
 
         let extras = extras.unwrap_or_default();
-        let price = self
-            .calculate_market_price(&order_args.token_id, order_args.side, order_args.amount)
-            .await?;
+        let price = if order_args.price.is_zero() {
+            self.calculate_market_price(&order_args.token_id, order_args.side, order_args.amount)
+                .await?
+        } else {
+            order_args.price
+        };
 
         if !self.is_price_in_range(
             price,
@@ -1004,10 +1047,18 @@ impl ClobClient {
         // to maintain consistency with the authentication context layer
         let body = PostOrder::new(order, api_creds.api_key.clone(), order_type);
 
+        // Serialize once, reuse for both HMAC and HTTP body.
+        let body_bytes = serde_json::to_vec(&body)
+            .map_err(|e| PolyfillError::parse(format!("Failed to serialize order: {}", e), None))?;
+
         let headers = create_l2_headers(signer, api_creds, "POST", "/order", Some(&body))?;
         let req = self.create_request_with_headers(Method::POST, "/order", headers.into_iter());
 
-        let response = req.json(&body).send().await?;
+        let response = req
+            .header("Content-Type", "application/json")
+            .body(body_bytes)
+            .send()
+            .await?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();

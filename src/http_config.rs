@@ -4,6 +4,7 @@
 //! designed for high-frequency trading environments where every millisecond counts.
 
 use reqwest::{Client, ClientBuilder};
+use std::net::SocketAddr;
 use std::time::Duration;
 
 /// Connection pre-warming helper
@@ -25,26 +26,33 @@ pub async fn prewarm_connections(client: &Client, base_url: &str) -> Result<(), 
 /// Create an optimized HTTP client for low-latency trading
 /// Benchmarked configuration: 309.3ms vs 349ms baseline (11.4% faster)
 pub fn create_optimized_client() -> Result<Client, reqwest::Error> {
-    ClientBuilder::new()
-        // Avoid reading OS proxy settings (can be slow and/or unavailable in some sandboxed envs)
+    create_optimized_client_with_resolve(None)
+}
+
+/// Create an optimized HTTP client pinned to a specific IP for the CLOB host.
+/// Use this to force different connections through different physical paths.
+pub fn create_optimized_client_with_resolve(
+    resolve: Option<(&'static str, SocketAddr)>,
+) -> Result<Client, reqwest::Error> {
+    let mut builder = ClientBuilder::new()
         .no_proxy()
-        // Connection pooling optimizations - aggressive reuse
-        .pool_max_idle_per_host(10) // Keep connections alive
-        .pool_idle_timeout(Duration::from_secs(90)) // Longer reuse window
-        // TCP optimizations
-        .tcp_nodelay(true) // Disable Nagle's algorithm for lower latency
-        // HTTP/2 optimizations - empirically tuned
-        .http2_adaptive_window(true) // Dynamically adjust flow control
-        .http2_initial_stream_window_size(512 * 1024) // 512KB - benchmarked optimal
-        // Compression - all algorithms enabled by default in reqwest
-        .gzip(true) // Ensure gzip is enabled
-        // User agent for identification
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .tcp_nodelay(true)
+        .http2_adaptive_window(true)
+        .http2_initial_stream_window_size(512 * 1024)
+        .gzip(true)
         .user_agent(concat!(
             "polyfill-rs/",
             env!("CARGO_PKG_VERSION"),
             " (high-frequency-trading)"
-        ))
-        .build()
+        ));
+
+    if let Some((host, addr)) = resolve {
+        builder = builder.resolve(host, addr);
+    }
+
+    builder.build()
 }
 
 /// Create a client optimized for co-located environments
