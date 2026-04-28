@@ -3,7 +3,7 @@
 //! This module defines all the stable public types used throughout the client.
 //! These types are optimized for latency-sensitive trading environments.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use chrono::{DateTime, Utc};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
@@ -549,15 +549,31 @@ pub struct OrderOptions {
     pub fee_rate_bps: Option<u32>,
 }
 
-/// Extra arguments for order creation
+/// Extra arguments for order creation (V2)
 #[derive(Debug, Clone)]
 pub struct ExtraOrderArgs {
+    pub metadata: B256,
+    pub builder: B256,
+}
+
+impl Default for ExtraOrderArgs {
+    fn default() -> Self {
+        Self {
+            metadata: B256::ZERO,
+            builder: B256::ZERO,
+        }
+    }
+}
+
+/// V1 order extras (RFQ accept/approve only)
+#[derive(Debug, Clone)]
+pub struct ExtraOrderArgsV1 {
     pub fee_rate_bps: u32,
     pub nonce: U256,
     pub taker: String,
 }
 
-impl Default for ExtraOrderArgs {
+impl Default for ExtraOrderArgsV1 {
     fn default() -> Self {
         Self {
             fee_rate_bps: 0,
@@ -579,32 +595,40 @@ pub struct MarketOrderArgs {
     pub price: Decimal,
 }
 
-/// Signed order request ready for submission
+/// Signed order request ready for submission (V2)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SignedOrderRequest {
     pub salt: u64,
     pub maker: String,
     pub signer: String,
+    /// Zero address — not in EIP-712 hash but kept for wire-body compat
     pub taker: String,
     pub token_id: String,
     pub maker_amount: String,
     pub taker_amount: String,
-    pub expiration: String,
-    pub nonce: String,
-    pub fee_rate_bps: String,
     pub side: String,
     pub signature_type: u8,
+    /// Unix ms timestamp (replaces nonce for uniqueness)
+    pub timestamp: String,
+    /// Expiration unix seconds ("0" = no expiration); not in EIP-712 hash
+    pub expiration: String,
+    /// 32-byte metadata hex
+    pub metadata: String,
+    /// 32-byte builder code hex
+    pub builder: String,
     pub signature: String,
 }
 
-/// Post order wrapper
+/// Post order wrapper (V2)
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PostOrder {
     pub order: SignedOrderRequest,
     pub owner: String,
     pub order_type: OrderType,
+    pub defer_exec: bool,
+    pub post_only: bool,
 }
 
 impl PostOrder {
@@ -613,6 +637,8 @@ impl PostOrder {
             order,
             owner,
             order_type,
+            defer_exec: false,
+            post_only: false,
         }
     }
 }

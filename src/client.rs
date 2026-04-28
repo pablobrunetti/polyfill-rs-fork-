@@ -2530,11 +2530,12 @@ mod tests {
             token_id: "123".to_string(),
             maker_amount: "100".to_string(),
             taker_amount: "50".to_string(),
-            expiration: "0".to_string(),
-            nonce: "0".to_string(),
-            fee_rate_bps: "0".to_string(),
             side: "BUY".to_string(),
             signature_type: 0,
+            timestamp: "1700000000000".to_string(),
+            expiration: "0".to_string(),
+            metadata: "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            builder: "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
             signature: "0xdeadbeef".to_string(),
         }
     }

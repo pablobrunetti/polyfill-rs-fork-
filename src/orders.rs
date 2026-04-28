@@ -40,6 +40,7 @@ pub struct ContractConfig {
     pub exchange: String,
     pub collateral: String,
     pub conditional_tokens: String,
+    pub neg_risk_adapter: String,
 }
 
 /// Order builder for creating and signing orders
@@ -87,18 +88,20 @@ static ROUNDING_CONFIG: LazyLock<HashMap<Decimal, RoundConfig>> = LazyLock::new(
     ])
 });
 
-/// Get contract configuration for chain
+/// Get V2 contract configuration for chain
 pub fn get_contract_config(chain_id: u64, neg_risk: bool) -> Option<ContractConfig> {
     match (chain_id, neg_risk) {
         (137, false) => Some(ContractConfig {
-            exchange: "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E".to_string(),
-            collateral: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174".to_string(),
+            exchange: "0xE111180000d2663C0091e4f400237545B87B996B".to_string(),
+            collateral: "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB".to_string(),
             conditional_tokens: "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045".to_string(),
+            neg_risk_adapter: "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296".to_string(),
         }),
         (137, true) => Some(ContractConfig {
-            exchange: "0xC5d563A36AE78145C45a50134d48A1215220f80a".to_string(),
-            collateral: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174".to_string(),
+            exchange: "0xe2222d279d744050d28e00520010520000310F59".to_string(),
+            collateral: "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB".to_string(),
             conditional_tokens: "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045".to_string(),
+            neg_risk_adapter: "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296".to_string(),
         }),
         _ => None,
     }
@@ -335,7 +338,7 @@ impl OrderBuilder {
         )
     }
 
-    /// Build and sign an order
+    /// Build and sign a V2 order
     #[allow(clippy::too_many_arguments)]
     fn build_signed_order(
         &self,
@@ -349,25 +352,27 @@ impl OrderBuilder {
         extras: &ExtraOrderArgs,
     ) -> Result<SignedOrderRequest> {
         let seed = generate_seed();
-        let taker_address = Address::from_str(&extras.taker)
-            .map_err(|e| PolyfillError::validation(format!("Invalid taker address: {}", e)))?;
 
         let u256_token_id = U256::from_str_radix(&token_id, 10)
             .map_err(|e| PolyfillError::validation(format!("Incorrect tokenId format: {}", e)))?;
+
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| PolyfillError::validation(format!("System clock error: {}", e)))?
+            .as_millis() as u64;
 
         let order = crate::auth::Order {
             salt: U256::from(seed),
             maker: self.funder,
             signer: self.signer.address(),
-            taker: taker_address,
             tokenId: u256_token_id,
             makerAmount: U256::from(maker_amount),
             takerAmount: U256::from(taker_amount),
-            expiration: U256::from(expiration),
-            nonce: extras.nonce,
-            feeRateBps: U256::from(extras.fee_rate_bps),
             side: side as u8,
             signatureType: self.sig_type as u8,
+            timestamp: U256::from(timestamp_ms),
+            metadata: extras.metadata,
+            builder: extras.builder,
         };
 
         let signature = sign_order_message(&self.signer, order, chain_id, exchange)?;
@@ -376,15 +381,16 @@ impl OrderBuilder {
             salt: seed,
             maker: self.funder.to_checksum(None),
             signer: self.signer.address().to_checksum(None),
-            taker: taker_address.to_checksum(None),
+            taker: "0x0000000000000000000000000000000000000000".to_string(),
             token_id,
             maker_amount: maker_amount.to_string(),
             taker_amount: taker_amount.to_string(),
-            expiration: expiration.to_string(),
-            nonce: extras.nonce.to_string(),
-            fee_rate_bps: extras.fee_rate_bps.to_string(),
             side: side.as_str().to_string(),
             signature_type: self.sig_type as u8,
+            timestamp: timestamp_ms.to_string(),
+            expiration: expiration.to_string(),
+            metadata: format!("{:#x}", extras.metadata),
+            builder: format!("{:#x}", extras.builder),
             signature,
         })
     }
@@ -424,17 +430,23 @@ mod tests {
 
     #[test]
     fn test_get_contract_config() {
-        // Test Polygon mainnet
-        let config = get_contract_config(137, false);
-        assert!(config.is_some());
+        let config = get_contract_config(137, false).unwrap();
+        assert_eq!(
+            config.exchange.to_lowercase(),
+            "0xe111180000d2663c0091e4f400237545b87b996b"
+        );
+        assert_eq!(
+            config.collateral.to_lowercase(),
+            "0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb"
+        );
 
-        // Test with neg risk
-        let config_neg = get_contract_config(137, true);
-        assert!(config_neg.is_some());
+        let config_neg = get_contract_config(137, true).unwrap();
+        assert_eq!(
+            config_neg.exchange.to_lowercase(),
+            "0xe2222d279d744050d28e00520010520000310f59"
+        );
 
-        // Test unsupported chain
-        let config_unsupported = get_contract_config(999, false);
-        assert!(config_unsupported.is_none());
+        assert!(get_contract_config(999, false).is_none());
     }
 
     #[test]

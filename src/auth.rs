@@ -36,23 +36,44 @@ sol! {
     }
 }
 
-// EIP-712 struct for order signing
+// EIP-712 struct for order signing (V2)
 sol! {
     struct Order {
         uint256 salt;
         address maker;
         address signer;
-        address taker;
         uint256 tokenId;
         uint256 makerAmount;
         uint256 takerAmount;
-        uint256 expiration;
-        uint256 nonce;
-        uint256 feeRateBps;
         uint8 side;
         uint8 signatureType;
+        uint256 timestamp;
+        bytes32 metadata;
+        bytes32 builder;
     }
 }
+
+// EIP-712 struct for V1 order signing (RFQ accept/approve only)
+mod v1_order {
+    alloy_sol_types::sol! {
+        struct Order {
+            uint256 salt;
+            address maker;
+            address signer;
+            address taker;
+            uint256 tokenId;
+            uint256 makerAmount;
+            uint256 takerAmount;
+            uint256 expiration;
+            uint256 nonce;
+            uint256 feeRateBps;
+            uint8 side;
+            uint8 signatureType;
+        }
+    }
+}
+
+pub use v1_order::Order as OrderV1;
 
 /// Get current Unix timestamp in seconds
 pub fn get_current_unix_time_secs() -> u64 {
@@ -91,10 +112,31 @@ pub fn sign_clob_auth_message(
     Ok(encode_prefixed(signature.as_bytes()))
 }
 
-/// Sign order message using EIP-712
+/// Sign order message using EIP-712 (V2)
 pub fn sign_order_message(
     signer: &PrivateKeySigner,
     order: Order,
+    chain_id: u64,
+    verifying_contract: Address,
+) -> Result<String> {
+    let domain = eip712_domain!(
+        name: "Polymarket CTF Exchange",
+        version: "2",
+        chain_id: chain_id,
+        verifying_contract: verifying_contract,
+    );
+
+    let signature = signer
+        .sign_typed_data_sync(&order, &domain)
+        .map_err(|e| PolyfillError::crypto(format!("Order signature failed: {}", e)))?;
+
+    Ok(encode_prefixed(signature.as_bytes()))
+}
+
+/// Sign V1 order message using EIP-712 (RFQ accept/approve only)
+pub fn sign_v1_order_message(
+    signer: &PrivateKeySigner,
+    order: OrderV1,
     chain_id: u64,
     verifying_contract: Address,
 ) -> Result<String> {
@@ -107,7 +149,7 @@ pub fn sign_order_message(
 
     let signature = signer
         .sign_typed_data_sync(&order, &domain)
-        .map_err(|e| PolyfillError::crypto(format!("Order signature failed: {}", e)))?;
+        .map_err(|e| PolyfillError::crypto(format!("V1 order signature failed: {}", e)))?;
 
     Ok(encode_prefixed(signature.as_bytes()))
 }
@@ -374,11 +416,61 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1));
         let ts2 = get_current_unix_time_secs();
 
-        // Timestamps should be increasing
         assert!(ts2 >= ts1);
-
-        // Should be reasonable current time (after 2020, before 2030)
         assert!(ts1 > 1_600_000_000);
         assert!(ts1 < 1_900_000_000);
+    }
+
+    #[test]
+    fn v2_order_typehash_matches_official_reference() {
+        use alloy_primitives::{keccak256, B256};
+        use alloy_sol_types::SolStruct;
+
+        let expected = keccak256(
+            "Order(uint256 salt,address maker,address signer,uint256 tokenId,uint256 makerAmount,uint256 takerAmount,uint8 side,uint8 signatureType,uint256 timestamp,bytes32 metadata,bytes32 builder)",
+        );
+
+        let dummy = Order {
+            salt: U256::ZERO,
+            maker: Address::ZERO,
+            signer: Address::ZERO,
+            tokenId: U256::ZERO,
+            makerAmount: U256::ZERO,
+            takerAmount: U256::ZERO,
+            side: 0,
+            signatureType: 0,
+            timestamp: U256::ZERO,
+            metadata: B256::ZERO,
+            builder: B256::ZERO,
+        };
+
+        assert_eq!(dummy.eip712_type_hash(), expected);
+    }
+
+    #[test]
+    fn v1_order_typehash_matches_official_reference() {
+        use alloy_primitives::keccak256;
+        use alloy_sol_types::SolStruct;
+
+        let expected = keccak256(
+            "Order(uint256 salt,address maker,address signer,address taker,uint256 tokenId,uint256 makerAmount,uint256 takerAmount,uint256 expiration,uint256 nonce,uint256 feeRateBps,uint8 side,uint8 signatureType)",
+        );
+
+        let dummy = OrderV1 {
+            salt: U256::ZERO,
+            maker: Address::ZERO,
+            signer: Address::ZERO,
+            taker: Address::ZERO,
+            tokenId: U256::ZERO,
+            makerAmount: U256::ZERO,
+            takerAmount: U256::ZERO,
+            expiration: U256::ZERO,
+            nonce: U256::ZERO,
+            feeRateBps: U256::ZERO,
+            side: 0,
+            signatureType: 0,
+        };
+
+        assert_eq!(dummy.eip712_type_hash(), expected);
     }
 }
