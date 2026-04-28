@@ -12,6 +12,7 @@ use alloy_signer_local::PrivateKeySigner;
 use rand::Rng;
 use rust_decimal::Decimal;
 use rust_decimal::RoundingStrategy::{AwayFromZero, MidpointTowardZero, ToZero};
+use rust_decimal::prelude::ToPrimitive;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -119,12 +120,12 @@ fn generate_seed() -> u64 {
 }
 
 /// Convert decimal to token units (multiply by 1e6)
-fn decimal_to_token_u32(amt: Decimal) -> u32 {
+fn decimal_to_token_u128(amt: Decimal) -> u128 {
     let mut amt = Decimal::from_scientific("1e6").expect("1e6 is not scientific") * amt;
     if amt.scale() > 0 {
         amt = amt.round_dp_with_strategy(0, MidpointTowardZero);
     }
-    amt.try_into().expect("Couldn't round decimal to integer")
+    amt.to_u128().expect("Couldn't convert decimal to u128")
 }
 
 impl OrderBuilder {
@@ -167,7 +168,7 @@ impl OrderBuilder {
         size: Decimal,
         price: Decimal,
         round_config: &RoundConfig,
-    ) -> (u32, u32) {
+    ) -> (u128, u128) {
         let raw_price = price.round_dp_with_strategy(round_config.price, MidpointTowardZero);
 
         match side {
@@ -176,8 +177,8 @@ impl OrderBuilder {
                 let raw_maker_amt = raw_taker_amt * raw_price;
                 let raw_maker_amt = self.fix_amount_rounding(raw_maker_amt, round_config);
                 (
-                    decimal_to_token_u32(raw_maker_amt),
-                    decimal_to_token_u32(raw_taker_amt),
+                    decimal_to_token_u128(raw_maker_amt),
+                    decimal_to_token_u128(raw_taker_amt),
                 )
             },
             Side::SELL => {
@@ -186,8 +187,8 @@ impl OrderBuilder {
                 let raw_taker_amt = self.fix_amount_rounding(raw_taker_amt, round_config);
 
                 (
-                    decimal_to_token_u32(raw_maker_amt),
-                    decimal_to_token_u32(raw_taker_amt),
+                    decimal_to_token_u128(raw_maker_amt),
+                    decimal_to_token_u128(raw_taker_amt),
                 )
             },
         }
@@ -200,7 +201,7 @@ impl OrderBuilder {
         amount: Decimal,
         price: Decimal,
         round_config: &RoundConfig,
-    ) -> (u32, u32) {
+    ) -> (u128, u128) {
         let raw_price = price.round_dp_with_strategy(round_config.price, MidpointTowardZero);
         match side {
             Side::BUY => {
@@ -208,8 +209,8 @@ impl OrderBuilder {
                 let raw_taker_amt = raw_maker_amt / raw_price;
                 let raw_taker_amt = self.fix_amount_rounding(raw_taker_amt, round_config);
                 (
-                    decimal_to_token_u32(raw_maker_amt),
-                    decimal_to_token_u32(raw_taker_amt),
+                    decimal_to_token_u128(raw_maker_amt),
+                    decimal_to_token_u128(raw_taker_amt),
                 )
             },
             Side::SELL => {
@@ -217,8 +218,8 @@ impl OrderBuilder {
                 let raw_taker_amt = raw_maker_amt * raw_price;
                 let raw_taker_amt = self.fix_amount_rounding(raw_taker_amt, round_config);
                 (
-                    decimal_to_token_u32(raw_maker_amt),
-                    decimal_to_token_u32(raw_taker_amt),
+                    decimal_to_token_u128(raw_maker_amt),
+                    decimal_to_token_u128(raw_taker_amt),
                 )
             },
         }
@@ -346,8 +347,8 @@ impl OrderBuilder {
         side: Side,
         chain_id: u64,
         exchange: Address,
-        maker_amount: u32,
-        taker_amount: u32,
+        maker_amount: u128,
+        taker_amount: u128,
         expiration: u64,
         extras: &ExtraOrderArgs,
     ) -> Result<SignedOrderRequest> {
@@ -401,8 +402,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_decimal_to_token_u32() {
-        let result = decimal_to_token_u32(Decimal::from_str("1.5").unwrap());
+    fn test_decimal_to_token_u128() {
+        let result = decimal_to_token_u128(Decimal::from_str("1.5").unwrap());
         assert_eq!(result, 1_500_000);
     }
 
@@ -414,17 +415,17 @@ mod tests {
     }
 
     #[test]
-    fn test_decimal_to_token_u32_edge_cases() {
+    fn test_decimal_to_token_u128_edge_cases() {
         // Test zero
-        let result = decimal_to_token_u32(Decimal::ZERO);
+        let result = decimal_to_token_u128(Decimal::ZERO);
         assert_eq!(result, 0);
 
         // Test small decimal
-        let result = decimal_to_token_u32(Decimal::from_str("0.000001").unwrap());
+        let result = decimal_to_token_u128(Decimal::from_str("0.000001").unwrap());
         assert_eq!(result, 1);
 
-        // Test large number
-        let result = decimal_to_token_u32(Decimal::from_str("1000.0").unwrap());
+        // Test large number — no overflow unlike u32 (which caps at ~$4294)
+        let result = decimal_to_token_u128(Decimal::from_str("1000.0").unwrap());
         assert_eq!(result, 1_000_000_000);
     }
 
