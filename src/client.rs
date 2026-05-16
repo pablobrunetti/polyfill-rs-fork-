@@ -1062,29 +1062,22 @@ impl ClobClient {
             order_args.builder_code = self.builder_code.clone();
         }
 
-        let market_price = self
-            .calculate_market_price(
-                &order_args.token_id,
-                order_args.side,
-                order_args.amount,
-                order_args.order_type,
-            )
-            .await?;
-
+        // Latency optimization: when `price_limit` is set, use it directly
+        // and skip the orderbook HTTP fetch (~30-50ms saved). Polymarket
+        // validates server-side; FAK orders simply don't fill if the limit
+        // is off-market. Matches pablobrunetti/polyfill-rs-fork- commit
+        // c6658dc (the `MarketOrderArgs.price > 0` short-circuit).
         let price = match order_args.price_limit {
-            Some(limit) => {
-                let limit_ok = match order_args.side {
-                    Side::BUY => market_price <= limit,
-                    Side::SELL => market_price >= limit,
-                };
-                if !limit_ok {
-                    return Err(PolyfillError::validation(format!(
-                        "Calculated market price {market_price} violates price_limit {limit}"
-                    )));
-                }
-                limit
-            },
-            None => market_price,
+            Some(limit) => limit,
+            None => {
+                self.calculate_market_price(
+                    &order_args.token_id,
+                    order_args.side,
+                    order_args.amount,
+                    order_args.order_type,
+                )
+                .await?
+            }
         };
 
         if order_args.side == Side::BUY {
