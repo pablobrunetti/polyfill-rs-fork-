@@ -2501,6 +2501,7 @@ mod tests {
             salt: 42,
             maker: "0x1111111111111111111111111111111111111111".to_string(),
             signer: "0x2222222222222222222222222222222222222222".to_string(),
+            taker: "0x0000000000000000000000000000000000000000".to_string(),
             token_id: "123".to_string(),
             maker_amount: "100".to_string(),
             taker_amount: "250".to_string(),

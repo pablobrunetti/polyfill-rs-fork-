@@ -599,6 +599,8 @@ pub struct SignedOrderRequest {
     pub salt: u64,
     pub maker: String,
     pub signer: String,
+    /// Zero address — not in EIP-712 hash but kept for wire-body compat
+    pub taker: String,
     pub token_id: String,
     pub maker_amount: String,
     pub taker_amount: String,

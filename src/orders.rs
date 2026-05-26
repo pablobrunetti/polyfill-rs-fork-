@@ -575,6 +575,7 @@ impl OrderBuilder {
             salt: seed,
             maker: self.funder.to_checksum(None),
             signer: order_signer.to_checksum(None),
+            taker: "0x0000000000000000000000000000000000000000".to_string(),
             token_id,
             maker_amount: maker_amount.to_string(),
             taker_amount: taker_amount.to_string(),
